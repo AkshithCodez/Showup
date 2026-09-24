@@ -1,0 +1,110 @@
+import type { PokemonSummary } from './pokemon.js';
+
+export type RoomPhase =
+  | 'lobby'
+  | 'draft'
+  | 'team-building'
+  | 'team-reveal'
+  | 'battle'
+  | 'finished';
+
+export type DraftMode = 'independent' | 'same-pool';
+
+export interface PokemonPoolRules {
+  includeRegular: boolean;
+  includeLegendaries: boolean;
+  includeMythicals: boolean;
+  includeMegas: boolean;
+  includeRegionalForms: boolean;
+  includeAlternateForms: boolean;
+  includeParadox: boolean;
+  includeUltraBeasts: boolean;
+}
+
+export const DEFAULT_POOL_RULES: PokemonPoolRules = {
+  includeRegular: true,
+  includeLegendaries: false,
+  includeMythicals: false,
+  includeMegas: false,
+  includeRegionalForms: true,
+  includeAlternateForms: true,
+  includeParadox: true,
+  includeUltraBeasts: true,
+};
+
+export const ALL_POKEMON_POOL_RULES: PokemonPoolRules = {
+  includeRegular: true,
+  includeLegendaries: true,
+  includeMythicals: true,
+  includeMegas: true,
+  includeRegionalForms: true,
+  includeAlternateForms: true,
+  includeParadox: true,
+  includeUltraBeasts: true,
+};
+
+export interface RoomConfig {
+  draftMode: DraftMode;
+  teamSize: number;
+  poolRules: PokemonPoolRules;
+  allowLegendaries?: boolean;
+}
+
+export interface Player {
+  id: string;
+  name: string;
+  connected: boolean;
+  ready: boolean;
+  isHost?: boolean;
+}
+
+export interface PlayerDraftState {
+  team: PokemonSummary[];
+  currentOptions: PokemonSummary[];
+  pickNumber: number;
+  completed: boolean;
+  lockedIn: boolean;
+}
+
+export interface OpponentDraftView {
+  teamCount: number;
+  completed: boolean;
+  lockedIn: boolean;
+}
+
+export interface ClientDraftView {
+  myDraft: PlayerDraftState;
+  opponentDraft?: OpponentDraftView;
+  targetTeamSize: number;
+  roundNumber: number;
+}
+
+export interface InternalDraftState {
+  targetTeamSize: number;
+  currentRound: number;
+  sharedRoundOptions?: PokemonSummary[];
+  playerStates: Record<string, PlayerDraftState>;
+}
+
+export interface RoomState {
+  roomCode: string;
+  hostId: string;
+  players: Player[];
+  phase: RoomPhase;
+  config: RoomConfig;
+  createdAt: number;
+  canStartDraft: boolean;
+  draft?: InternalDraftState;
+}
+
+export interface ClientRoomView {
+  roomCode: string;
+  hostId: string;
+  players: Player[];
+  phase: RoomPhase;
+  config: RoomConfig;
+  createdAt: number;
+  canStartDraft: boolean;
+  draft?: ClientDraftView;
+}
+

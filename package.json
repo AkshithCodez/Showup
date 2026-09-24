@@ -1,0 +1,19 @@
+{
+  "name": "showup-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -p \"[{name}]\" -n \"SERVER,WEB\" -c \"cyan.bold,magenta.bold\" \"npm run dev --workspace=@showup/server\" \"npm run dev --workspace=@showup/web\"",
+    "dev:server": "npm run dev --workspace=@showup/server",
+    "dev:web": "npm run dev --workspace=@showup/web",
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
