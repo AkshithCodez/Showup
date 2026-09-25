@@ -28,6 +28,8 @@ interface GameSocketContextValue {
   toggleReady: () => void;
   startDraft: () => void;
   selectPokemon: (pokemonId: number) => void;
+  updatePokemonBuild: (pokemonIndex: number, build: Partial<import('@showup/shared').PokemonBuild>) => void;
+  setTeamReady: () => void;
   leaveRoom: () => void;
 }
 
@@ -83,6 +85,10 @@ export function GameSocketProvider({ children }: { children: ReactNode }) {
       setError(message);
     }
 
+    function onTeamError({ message }: { message: string }) {
+      setError(message);
+    }
+
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
     socket.on('room:created', onRoomCreated);
@@ -90,6 +96,7 @@ export function GameSocketProvider({ children }: { children: ReactNode }) {
     socket.on('room:updated', onRoomUpdated);
     socket.on('room:error', onRoomError);
     socket.on('draft:error', onDraftError);
+    socket.on('team:error', onTeamError);
 
     if (!socket.connected) {
       socket.connect();
@@ -105,6 +112,7 @@ export function GameSocketProvider({ children }: { children: ReactNode }) {
       socket.off('room:updated', onRoomUpdated);
       socket.off('room:error', onRoomError);
       socket.off('draft:error', onDraftError);
+      socket.off('team:error', onTeamError);
     };
   }, []);
 
@@ -161,6 +169,28 @@ export function GameSocketProvider({ children }: { children: ReactNode }) {
     });
   }, [room, player]);
 
+  const updatePokemonBuild = useCallback((pokemonIndex: number, build: Partial<import('@showup/shared').PokemonBuild>) => {
+    if (!room || !player) return;
+    const socket = getSocket();
+    setError(null);
+    socket.emit('team:updatePokemon', {
+      roomCode: room.roomCode,
+      playerId: player.id,
+      pokemonIndex,
+      build,
+    });
+  }, [room, player]);
+
+  const setTeamReady = useCallback(() => {
+    if (!room || !player) return;
+    const socket = getSocket();
+    setError(null);
+    socket.emit('team:ready', {
+      roomCode: room.roomCode,
+      playerId: player.id,
+    });
+  }, [room, player]);
+
   const leaveRoom = useCallback(() => {
     if (!room || !player) return;
     const socket = getSocket();
@@ -189,6 +219,8 @@ export function GameSocketProvider({ children }: { children: ReactNode }) {
         toggleReady,
         startDraft,
         selectPokemon,
+        updatePokemonBuild,
+        setTeamReady,
         leaveRoom,
       }}
     >

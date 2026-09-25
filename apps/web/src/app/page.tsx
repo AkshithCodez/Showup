@@ -4,7 +4,8 @@ import { useGameSocket } from '../context/GameSocketContext';
 import { LandingView } from '../components/LandingView';
 import { LobbyView } from '../components/LobbyView';
 import { DraftView } from '../components/DraftView';
-import { TeamBuildingView } from '../components/TeamBuildingView';
+import { TeamBuilderView } from '../components/TeamBuilderView';
+import { TeamRevealView } from '../components/TeamRevealView';
 
 export default function HomePage() {
   const { room } = useGameSocket();
@@ -19,7 +20,9 @@ export default function HomePage() {
     case 'draft':
       return <DraftView />;
     case 'team-building':
-      return <TeamBuildingView />;
+      return <TeamBuilderView />;
+    case 'team-reveal':
+      return <TeamRevealView />;
     default:
       return <LobbyView />;
   }

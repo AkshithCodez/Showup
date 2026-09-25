@@ -5,8 +5,14 @@ import {
   type ClientRoomView,
   type ClientDraftView,
   type OpponentDraftView,
+  type ClientTeamBuildingView,
+  type RevealedPlayerTeam,
+  type PokemonBuild,
+  type BuildOptionSet,
+  type StatSpread,
   DEFAULT_ROOM_CONFIG,
   DEFAULT_POOL_RULES,
+  DEFAULT_SET_BUILDER_RULES,
   MAX_PLAYERS_PER_ROOM,
   generateRoomCode,
   normalizeRoomCode,
@@ -14,6 +20,7 @@ import {
   checkCanStartDraft,
 } from '@showup/shared';
 import { PokemonDataService } from '../services/PokemonDataService.js';
+import { PokemonSetDataService } from '../services/PokemonSetDataService.js';
 
 interface SocketPlayerMapping {
   playerId: string;
@@ -25,9 +32,11 @@ export class RoomManager {
   private socketToPlayer = new Map<string, SocketPlayerMapping>();
   private playerToSocket = new Map<string, string>();
   private pokemonService: PokemonDataService;
+  private setDataService: PokemonSetDataService;
 
-  constructor(pokemonService?: PokemonDataService) {
+  constructor(pokemonService?: PokemonDataService, setDataService?: PokemonSetDataService) {
     this.pokemonService = pokemonService || new PokemonDataService();
+    this.setDataService = setDataService || new PokemonSetDataService();
   }
 
   /**
@@ -71,6 +80,10 @@ export class RoomManager {
         poolRules: {
           ...DEFAULT_ROOM_CONFIG.poolRules,
           ...(config?.poolRules || {}),
+        },
+        setBuilderRules: {
+          ...DEFAULT_SET_BUILDER_RULES,
+          ...(config?.setBuilderRules || {}),
         },
       },
       createdAt: Date.now(),
@@ -328,7 +341,7 @@ export class RoomManager {
       );
 
       if (allCompleted) {
-        room.phase = 'team-building';
+        await this.initTeamBuilding(room);
       }
     } else {
       // Same-pool mode: lock this player in for the round
@@ -348,7 +361,7 @@ export class RoomManager {
               ps.currentOptions = [];
             }
           }
-          room.phase = 'team-building';
+          await this.initTeamBuilding(room);
         } else {
           room.draft.currentRound++;
           for (const player of room.players) {
@@ -388,10 +401,234 @@ export class RoomManager {
   }
 
   /**
-   * Serializes room state specifically for a player, omitting opponent's private draft picks.
+   * Initializes the team-building phase after 6/6 draft completes.
+   */
+  private async initTeamBuilding(room: RoomState): Promise<void> {
+    room.phase = 'team-building';
+    room.teamBuilding = {
+      playerStates: {},
+    };
+
+    const rules = room.config.setBuilderRules || DEFAULT_SET_BUILDER_RULES;
+
+    for (const player of room.players) {
+      const draftState = room.draft?.playerStates[player.id];
+      const draftedTeam = draftState?.team || [];
+
+      const builds: PokemonBuild[] = [];
+      const options: BuildOptionSet[] = [];
+
+      for (let i = 0; i < draftedTeam.length; i++) {
+        const pkmn = draftedTeam[i];
+        const legalAbilities = this.setDataService.getAbilitiesForPokemon(pkmn, rules.abilityMode);
+        const legalMoves = await this.setDataService.getMovesForPokemon(pkmn, rules.moveMode);
+
+        options.push({
+          abilities: legalAbilities,
+          moves: legalMoves,
+        });
+
+        const defaultAbility = legalAbilities[0]?.displayName || '';
+        const defaultTera = pkmn.types[0] || 'Normal';
+
+        builds.push({
+          id: `build-${player.id}-${pkmn.id}-${i}`,
+          speciesId: pkmn.speciesId,
+          speciesName: pkmn.speciesName,
+          showdownId: pkmn.name,
+          displayName: pkmn.displayName,
+          ability: defaultAbility,
+          item: '',
+          moves: [],
+          nature: 'Hardy',
+          evs: { hp: 0, atk: 0, def: 0, spa: 0, spd: 0, spe: 0 },
+          ivs: { hp: 31, atk: 31, def: 31, spa: 31, spd: 31, spe: 31 },
+          teraType: defaultTera,
+          level: 100,
+        });
+      }
+
+      room.teamBuilding.playerStates[player.id] = {
+        pokemon: builds,
+        options,
+        activePokemonIndex: 0,
+        completed: false,
+        ready: false,
+      };
+    }
+  }
+
+  /**
+   * Updates a drafted Pokemon's competitive build set.
+   */
+  public updatePokemonBuild(
+    roomCodeRaw: string,
+    playerId: string,
+    pokemonIndex: number,
+    updates: Partial<PokemonBuild>
+  ): RoomState {
+    const roomCode = normalizeRoomCode(roomCodeRaw);
+    const room = this.rooms.get(roomCode);
+    if (!room) {
+      throw new Error(`Room "${roomCode}" not found.`);
+    }
+
+    if (room.phase !== 'team-building' || !room.teamBuilding) {
+      throw new Error('Room is not currently in team-building phase.');
+    }
+
+    const playerState = room.teamBuilding.playerStates[playerId];
+    if (!playerState) {
+      throw new Error('Player team building state not found.');
+    }
+
+    if (playerState.ready) {
+      throw new Error('Your team is already locked in as ready.');
+    }
+
+    if (pokemonIndex < 0 || pokemonIndex >= playerState.pokemon.length) {
+      throw new Error(
+        `Invalid Pokémon index: ${pokemonIndex}. Must be between 0 and ${playerState.pokemon.length - 1}.`
+      );
+    }
+
+    const currentBuild = playerState.pokemon[pokemonIndex];
+
+    // Validate EV updates if provided
+    if (updates.evs) {
+      const stats: (keyof StatSpread)[] = ['hp', 'atk', 'def', 'spa', 'spd', 'spe'];
+      let totalEVs = 0;
+      for (const stat of stats) {
+        const val = updates.evs[stat] ?? currentBuild.evs[stat] ?? 0;
+        if (typeof val !== 'number' || isNaN(val) || val < 0 || val > 252) {
+          throw new Error(`EV for ${stat.toUpperCase()} must be between 0 and 252 (got ${val}).`);
+        }
+        totalEVs += val;
+      }
+      if (totalEVs > 510) {
+        throw new Error(`Total EVs cannot exceed 510 (got ${totalEVs}).`);
+      }
+      currentBuild.evs = { ...currentBuild.evs, ...updates.evs };
+    }
+
+    // Validate IV updates if provided
+    if (updates.ivs) {
+      const stats: (keyof StatSpread)[] = ['hp', 'atk', 'def', 'spa', 'spd', 'spe'];
+      for (const stat of stats) {
+        const val = updates.ivs[stat] ?? currentBuild.ivs[stat] ?? 31;
+        if (typeof val !== 'number' || isNaN(val) || val < 0 || val > 31) {
+          throw new Error(`IV for ${stat.toUpperCase()} must be between 0 and 31 (got ${val}).`);
+        }
+      }
+      currentBuild.ivs = { ...currentBuild.ivs, ...updates.ivs };
+    }
+
+    // Moves update: max 4 moves, no duplicates
+    if (updates.moves !== undefined) {
+      const cleanMoves = updates.moves.filter((m) => Boolean(m?.trim()));
+      if (cleanMoves.length > 4) {
+        throw new Error('A Pokémon can have at most 4 moves.');
+      }
+      const unique = new Set(cleanMoves.map((m) => m.toLowerCase().replace(/[\s-]+/g, '')));
+      if (unique.size !== cleanMoves.length) {
+        throw new Error('Duplicate moves are not permitted on the same Pokémon.');
+      }
+      currentBuild.moves = cleanMoves;
+    }
+
+    if (updates.ability !== undefined) {
+      currentBuild.ability = updates.ability.trim();
+    }
+
+    if (updates.item !== undefined) {
+      currentBuild.item = updates.item.trim();
+    }
+
+    if (updates.nature !== undefined) {
+      currentBuild.nature = updates.nature.trim();
+    }
+
+    if (updates.teraType !== undefined) {
+      currentBuild.teraType = updates.teraType;
+    }
+
+    if (updates.level !== undefined) {
+      if (updates.level < 1 || updates.level > 100) {
+        throw new Error('Level must be between 1 and 100.');
+      }
+      currentBuild.level = updates.level;
+    }
+
+    playerState.activePokemonIndex = pokemonIndex;
+    return room;
+  }
+
+  /**
+   * Sets player team as ready after full validation.
+   */
+  public async setPlayerTeamReady(
+    roomCodeRaw: string,
+    playerId: string
+  ): Promise<RoomState> {
+    const roomCode = normalizeRoomCode(roomCodeRaw);
+    const room = this.rooms.get(roomCode);
+    if (!room) {
+      throw new Error(`Room "${roomCode}" not found.`);
+    }
+
+    if (room.phase !== 'team-building' || !room.teamBuilding) {
+      throw new Error('Room is not currently in team-building phase.');
+    }
+
+    const playerState = room.teamBuilding.playerStates[playerId];
+    if (!playerState) {
+      throw new Error('Player team building state not found.');
+    }
+
+    const draftState = room.draft?.playerStates[playerId];
+    if (!draftState || playerState.pokemon.length !== 6) {
+      throw new Error('You must draft and configure all 6 Pokémon.');
+    }
+
+    const rules = room.config.setBuilderRules || DEFAULT_SET_BUILDER_RULES;
+
+    // Validate all 6 Pokémon sets server-side
+    for (let i = 0; i < playerState.pokemon.length; i++) {
+      const build = playerState.pokemon[i];
+      const drafted = draftState.team[i];
+      const { valid, errors } = await this.setDataService.validatePokemonBuild(
+        build,
+        drafted,
+        rules
+      );
+      if (!valid) {
+        throw new Error(`Validation failed for ${build.displayName} (Slot ${i + 1}): ${errors.join(' ')}`);
+      }
+    }
+
+    playerState.completed = true;
+    playerState.ready = true;
+
+    // Check if both players are ready
+    const allReady = room.players.every(
+      (p) => room.teamBuilding?.playerStates[p.id]?.ready
+    );
+
+    if (allReady) {
+      // Transition to team-reveal!
+      room.phase = 'team-reveal';
+    }
+
+    return room;
+  }
+
+  /**
+   * Serializes room state specifically for a player, omitting opponent's private draft and build sets.
    */
   public serializeRoomForPlayer(room: RoomState, playerId: string): ClientRoomView {
     let draftView: ClientDraftView | undefined = undefined;
+    let teamBuildingView: ClientTeamBuildingView | undefined = undefined;
+    let revealedTeams: Record<string, RevealedPlayerTeam> | undefined = undefined;
 
     if (room.draft) {
       const myDraftState = room.draft.playerStates[playerId] || {
@@ -421,6 +658,62 @@ export class RoomManager {
       };
     }
 
+    // Team Building serialization with strict privacy
+    if (room.teamBuilding) {
+      const myTBState = room.teamBuilding.playerStates[playerId];
+      const opponent = room.players.find((p) => p.id !== playerId);
+      const opponentTBState = opponent ? room.teamBuilding.playerStates[opponent.id] : undefined;
+
+      if (myTBState) {
+        const myCompletedCount = myTBState.pokemon.filter((b) => {
+          return (
+            Boolean(b.ability?.trim()) &&
+            (b.moves || []).filter((m) => Boolean(m?.trim())).length === 4 &&
+            Boolean(b.nature?.trim()) &&
+            Boolean(b.teraType)
+          );
+        }).length;
+
+        const opponentCompletedCount = opponentTBState
+          ? opponentTBState.pokemon.filter((b) => {
+              return (
+                Boolean(b.ability?.trim()) &&
+                (b.moves || []).filter((m) => Boolean(m?.trim())).length === 4 &&
+                Boolean(b.nature?.trim()) &&
+                Boolean(b.teraType)
+              );
+            }).length
+          : 0;
+
+        teamBuildingView = {
+          pokemon: myTBState.pokemon,
+          options: myTBState.options,
+          activePokemonIndex: myTBState.activePokemonIndex,
+          isReady: myTBState.ready,
+          completedCount: myCompletedCount,
+          opponent: {
+            completedCount: opponentCompletedCount,
+            ready: opponentTBState?.ready || false,
+          },
+        };
+      }
+    }
+
+    // Team Reveal serialization: both players' final builds revealed!
+    if (room.phase === 'team-reveal' && room.teamBuilding) {
+      revealedTeams = {};
+      for (const p of room.players) {
+        const tbState = room.teamBuilding.playerStates[p.id];
+        if (tbState) {
+          revealedTeams[p.id] = {
+            playerId: p.id,
+            playerName: p.name,
+            team: tbState.pokemon,
+          };
+        }
+      }
+    }
+
     return {
       roomCode: room.roomCode,
       hostId: room.hostId,
@@ -430,6 +723,8 @@ export class RoomManager {
       createdAt: room.createdAt,
       canStartDraft: room.canStartDraft,
       draft: draftView,
+      teamBuilding: teamBuildingView,
+      revealedTeams,
     };
   }
 
@@ -511,6 +806,10 @@ export class RoomManager {
 
   public getPokemonService(): PokemonDataService {
     return this.pokemonService;
+  }
+
+  public getSetDataService(): PokemonSetDataService {
+    return this.setDataService;
   }
 
   public getRoom(roomCodeRaw: string): RoomState | undefined {

@@ -117,7 +117,37 @@ export function setupSocketHandlers(
     });
 
 
-    // 6. Leave Room
+    // 6. Update Pokemon Build in Team Building Phase
+    socket.on('team:updatePokemon', ({ roomCode, playerId, pokemonIndex, build }) => {
+      try {
+        const mapping = roomManager.getPlayerMapping(socket.id);
+        if (mapping && mapping.playerId !== playerId) {
+          throw new Error('Unauthorized: You cannot modify another trainer\'s Pokémon.');
+        }
+        const updatedRoom = roomManager.updatePokemonBuild(roomCode, playerId, pokemonIndex, build);
+        broadcastRoomUpdate(io, roomManager, updatedRoom);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Failed to update Pokémon build.';
+        socket.emit('team:error', { message });
+      }
+    });
+
+    // 7. Player Marks Team as Ready
+    socket.on('team:ready', async ({ roomCode, playerId }) => {
+      try {
+        const mapping = roomManager.getPlayerMapping(socket.id);
+        if (mapping && mapping.playerId !== playerId) {
+          throw new Error('Unauthorized: You cannot lock in another trainer\'s team.');
+        }
+        const updatedRoom = await roomManager.setPlayerTeamReady(roomCode, playerId);
+        broadcastRoomUpdate(io, roomManager, updatedRoom);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Failed to lock in team ready.';
+        socket.emit('team:error', { message });
+      }
+    });
+
+    // 8. Leave Room
     socket.on('room:leave', ({ roomCode, playerId }) => {
       try {
         const { room } = roomManager.leaveRoom(roomCode, playerId);

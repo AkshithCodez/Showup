@@ -28,10 +28,24 @@ export interface DraftStartPayload {
   playerId: string;
 }
 
+import type { PokemonBuild } from './pokemon.js';
+
 export interface DraftSelectPokemonPayload {
   roomCode: string;
   playerId: string;
   pokemonId: number;
+}
+
+export interface TeamUpdatePokemonPayload {
+  roomCode: string;
+  playerId: string;
+  pokemonIndex: number;
+  build: Partial<PokemonBuild>;
+}
+
+export interface TeamReadyPayload {
+  roomCode: string;
+  playerId: string;
 }
 
 export interface RoomErrorPayload {
@@ -46,6 +60,8 @@ export interface ClientToServerEvents {
   'player:ready': (payload: PlayerReadyPayload) => void;
   'draft:start': (payload: DraftStartPayload) => void;
   'draft:selectPokemon': (payload: DraftSelectPokemonPayload) => void;
+  'team:updatePokemon': (payload: TeamUpdatePokemonPayload) => void;
+  'team:ready': (payload: TeamReadyPayload) => void;
 }
 
 export interface ServerToClientEvents {
@@ -54,6 +70,7 @@ export interface ServerToClientEvents {
   'room:updated': (payload: { room: ClientRoomView }) => void;
   'room:error': (payload: RoomErrorPayload) => void;
   'draft:error': (payload: { message: string }) => void;
+  'team:error': (payload: { message: string }) => void;
   'player:disconnected': (payload: { playerId: string; playerName: string }) => void;
 }
 

@@ -61,17 +61,64 @@ export interface PokemonSummary {
   isMythical?: boolean;
 }
 
+export interface MoveSummary {
+  id: string;
+  displayName: string;
+  type: PokemonType;
+  category: 'Physical' | 'Special' | 'Status';
+  basePower: number;
+  accuracy: number | true;
+  priority: number;
+  shortDesc?: string;
+}
+
+export interface AbilitySummary {
+  id: string;
+  displayName: string;
+  shortDesc?: string;
+  isSlot?: '0' | '1' | 'H';
+}
+
+export interface ItemSummary {
+  id: string;
+  displayName: string;
+  shortDesc?: string;
+}
+
+export interface NatureSummary {
+  id: string;
+  displayName: string;
+  plus?: keyof StatSpread;
+  minus?: keyof StatSpread;
+  label: string;
+}
+
+export interface BuildOptionSet {
+  abilities: AbilitySummary[];
+  moves: MoveSummary[];
+}
+
 export interface PokemonBuild {
   id: string;
-  species: string;
-  ability?: string;
-  item?: string;
-  moves: string[];
-  nature?: string;
+  speciesId: number;
+  speciesName: string;
+  showdownId: string;
+  displayName: string;
+
+  ability: string;
+  item: string;
+
+  moves: string[]; // exactly 4 moves
+
+  nature: string;
+
   evs: StatSpread;
   ivs: StatSpread;
+
   teraType?: PokemonType;
+
   level: number;
+
   gender?: 'M' | 'F' | 'N';
   shiny?: boolean;
 }
