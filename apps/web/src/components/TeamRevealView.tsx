@@ -53,7 +53,7 @@ function formatNonStandardIVs(ivs: StatSpread): string | null {
 }
 
 export function TeamRevealView() {
-  const { room, player } = useGameSocket();
+  const { room, player, startBattle, isHost } = useGameSocket();
   const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
   const [exportModalContent, setExportModalContent] = useState<{ title: string; text: string } | null>(null);
   const [copiedToast, setCopiedToast] = useState(false);
@@ -89,18 +89,34 @@ export function TeamRevealView() {
         <div className="space-y-1.5 text-center md:text-left z-10">
           <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-bold uppercase tracking-widest">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span>Phase 3 Complete • Ready For Battle</span>
+            <span>Phase 4 Ready • 6v6 Singles</span>
           </div>
           <h1 className="text-3xl sm:text-4xl font-black uppercase text-white tracking-wide">
             Team Reveal
           </h1>
           <p className="text-xs sm:text-sm text-slate-400 max-w-xl">
-            Both trainers have built and locked their competitive battle rosters. Inspect your opponent's sets, export Showdown teams, or await Phase 4 battle engine integration.
+            Both trainers have built and locked their competitive battle rosters. Inspect sets, export Showdown teams, and start the battle!
           </p>
         </div>
 
-        {/* Global Export Options */}
-        <div className="flex flex-wrap items-center gap-2 z-10">
+        {/* Global Action & Export Options */}
+        <div className="flex flex-wrap items-center gap-3 z-10">
+          {isHost ? (
+            <button
+              id="start-battle-btn"
+              onClick={startBattle}
+              className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-400 text-white text-xs font-black uppercase tracking-widest shadow-xl shadow-red-950/60 transition-all flex items-center gap-2 transform active:scale-95 animate-pulse"
+            >
+              <span>⚔️</span>
+              <span>Start Battle</span>
+            </button>
+          ) : (
+            <div className="px-4 py-2.5 rounded-xl bg-surface-elevated border border-surface-border text-slate-300 text-xs font-semibold flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-yellow-400 animate-ping" />
+              <span>Waiting for Host to start battle...</span>
+            </div>
+          )}
+
           {revealed[player.id] && (
             <button
               onClick={() => {

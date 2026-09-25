@@ -155,6 +155,8 @@ export interface RevealedPlayerTeam {
   team: PokemonBuild[];
 }
 
+import type { ClientBattleView } from './battle.js';
+
 export interface ClientRoomView {
   roomCode: string;
   hostId: string;
@@ -166,5 +168,6 @@ export interface ClientRoomView {
   draft?: ClientDraftView;
   teamBuilding?: ClientTeamBuildingView;
   revealedTeams?: Record<string, RevealedPlayerTeam>;
+  battle?: ClientBattleView;
 }
 

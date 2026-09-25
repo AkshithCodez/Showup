@@ -30,6 +30,10 @@ interface GameSocketContextValue {
   selectPokemon: (pokemonId: number) => void;
   updatePokemonBuild: (pokemonIndex: number, build: Partial<import('@showup/shared').PokemonBuild>) => void;
   setTeamReady: () => void;
+  startBattle: () => void;
+  submitBattleAction: (action: import('@showup/shared').BattleAction) => void;
+  forfeitBattle: () => void;
+  rematchBattle: () => void;
   leaveRoom: () => void;
 }
 
@@ -89,6 +93,10 @@ export function GameSocketProvider({ children }: { children: ReactNode }) {
       setError(message);
     }
 
+    function onBattleError({ message }: { message: string }) {
+      setError(message);
+    }
+
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
     socket.on('room:created', onRoomCreated);
@@ -97,6 +105,7 @@ export function GameSocketProvider({ children }: { children: ReactNode }) {
     socket.on('room:error', onRoomError);
     socket.on('draft:error', onDraftError);
     socket.on('team:error', onTeamError);
+    socket.on('battle:error', onBattleError);
 
     if (!socket.connected) {
       socket.connect();
@@ -113,6 +122,7 @@ export function GameSocketProvider({ children }: { children: ReactNode }) {
       socket.off('room:error', onRoomError);
       socket.off('draft:error', onDraftError);
       socket.off('team:error', onTeamError);
+      socket.off('battle:error', onBattleError);
     };
   }, []);
 
@@ -191,6 +201,47 @@ export function GameSocketProvider({ children }: { children: ReactNode }) {
     });
   }, [room, player]);
 
+  const startBattle = useCallback(() => {
+    if (!room || !player) return;
+    const socket = getSocket();
+    setError(null);
+    socket.emit('battle:start', {
+      roomCode: room.roomCode,
+      playerId: player.id,
+    });
+  }, [room, player]);
+
+  const submitBattleAction = useCallback((action: import('@showup/shared').BattleAction) => {
+    if (!room || !player) return;
+    const socket = getSocket();
+    setError(null);
+    socket.emit('battle:action', {
+      roomCode: room.roomCode,
+      playerId: player.id,
+      action,
+    });
+  }, [room, player]);
+
+  const forfeitBattle = useCallback(() => {
+    if (!room || !player) return;
+    const socket = getSocket();
+    setError(null);
+    socket.emit('battle:forfeit', {
+      roomCode: room.roomCode,
+      playerId: player.id,
+    });
+  }, [room, player]);
+
+  const rematchBattle = useCallback(() => {
+    if (!room || !player) return;
+    const socket = getSocket();
+    setError(null);
+    socket.emit('battle:rematch', {
+      roomCode: room.roomCode,
+      playerId: player.id,
+    });
+  }, [room, player]);
+
   const leaveRoom = useCallback(() => {
     if (!room || !player) return;
     const socket = getSocket();
@@ -221,6 +272,10 @@ export function GameSocketProvider({ children }: { children: ReactNode }) {
         selectPokemon,
         updatePokemonBuild,
         setTeamReady,
+        startBattle,
+        submitBattleAction,
+        forfeitBattle,
+        rematchBattle,
         leaveRoom,
       }}
     >

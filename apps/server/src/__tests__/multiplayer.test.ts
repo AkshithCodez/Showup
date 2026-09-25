@@ -882,6 +882,472 @@ async function runMultiplayerAndDraftVerification() {
 
     console.log('\n🎉 ALL PHASE 1 + PHASE 2 + PHASE 3 INTEGRATION TESTS PASSED SUCCESSFULLY!\n');
 
+    // ─────────────────────────────────────────────────────────────
+    // PHASE 4: BATTLE INTEGRATION TEST
+    // ─────────────────────────────────────────────────────────────
+    console.log('\n\n===================================================');
+    console.log(' 🗡️  PHASE 4: SHOWDOWN BATTLE SIMULATOR INTEGRATION');
+    console.log('===================================================\n');
+
+    // ─────────────────────────────────────────────────────────────
+    // P4-1: START BATTLE FROM TEAM REVEAL
+    // ─────────────────────────────────────────────────────────────
+    console.log('--- P4-1: Start Battle from Team Reveal ---');
+
+    // Verify we're in team-reveal phase
+    if (p1CurrentRoom.phase !== 'team-reveal') {
+      throw new Error(`Expected phase team-reveal, got ${p1CurrentRoom.phase}`);
+    }
+
+    // Start battle: either player can trigger it
+    const p1BattleStartPromise = waitForRoomUpdate(
+      client1,
+      (r) => r.phase === 'battle' && r.battle !== undefined && r.battle.availableActions !== undefined
+    );
+    const p2BattleStartPromise = waitForRoomUpdate(
+      client2,
+      (r) => r.phase === 'battle' && r.battle !== undefined && r.battle.availableActions !== undefined
+    );
+
+    client1.emit('battle:start', {
+      roomCode: indRoomCode,
+      playerId: 'trainer-ash-2',
+    });
+
+    p1CurrentRoom = await p1BattleStartPromise;
+    p2CurrentRoom = await p2BattleStartPromise;
+
+    if (p1CurrentRoom.phase !== 'battle') {
+      throw new Error(`Expected battle phase, got ${p1CurrentRoom.phase}`);
+    }
+    if (!p1CurrentRoom.battle) {
+      throw new Error('Battle view missing from room after battle:start');
+    }
+    if (!p2CurrentRoom.battle) {
+      throw new Error('Battle view missing for player 2');
+    }
+
+    console.log(`✓ Battle started! ID: ${p1CurrentRoom.battle.battleId}`);
+    console.log(`  Phase: ${p1CurrentRoom.battle.phase}`);
+
+    // ─────────────────────────────────────────────────────────────
+    // P4-2: BATTLE VIEW PRIVACY
+    // ─────────────────────────────────────────────────────────────
+    console.log('--- P4-2: Battle View Privacy Verification ---');
+
+    const ashBattle = p1CurrentRoom.battle!;
+    const garyBattle = p2CurrentRoom.battle!;
+
+    // Each player should see their own side as "mySide" and opponent as "opponentSide"
+    if (ashBattle.mySide.playerId !== 'trainer-ash-2') {
+      throw new Error(`Ash's mySide.playerId should be trainer-ash-2, got ${ashBattle.mySide.playerId}`);
+    }
+    if (ashBattle.opponentSide.playerId !== 'trainer-gary-2') {
+      throw new Error(`Ash's opponentSide should be Gary, got ${ashBattle.opponentSide.playerId}`);
+    }
+    if (garyBattle.mySide.playerId !== 'trainer-gary-2') {
+      throw new Error(`Gary's mySide.playerId should be trainer-gary-2, got ${garyBattle.mySide.playerId}`);
+    }
+    if (garyBattle.opponentSide.playerId !== 'trainer-ash-2') {
+      throw new Error(`Gary's opponentSide should be Ash, got ${garyBattle.opponentSide.playerId}`);
+    }
+
+    // Own side should have exact HP, opponent should not
+    if (ashBattle.mySide.team.length !== 6) {
+      throw new Error(`Expected 6 pokemon on Ash's side, got ${ashBattle.mySide.team.length}`);
+    }
+    if (garyBattle.mySide.team.length !== 6) {
+      throw new Error(`Expected 6 pokemon on Gary's side, got ${garyBattle.mySide.team.length}`);
+    }
+
+    // My side should have exact HP values
+    const myFirstPoke = ashBattle.mySide.team[0];
+    if (myFirstPoke.hp === undefined || myFirstPoke.maxHp === undefined) {
+      throw new Error('Own side should have exact HP/maxHp values');
+    }
+
+    // Opponent side should NOT have exact HP (only percent)
+    const oppFirstPoke = ashBattle.opponentSide.team[0];
+    if (oppFirstPoke.hp !== undefined) {
+      throw new Error('Opponent side should NOT expose exact HP values');
+    }
+
+    console.log('✓ Battle view privacy verified: own HP exact, opponent HP percentage-only');
+
+    // ─────────────────────────────────────────────────────────────
+    // P4-3: TEAM PREVIEW / LEAD SELECTION
+    // ─────────────────────────────────────────────────────────────
+    console.log('--- P4-3: Team Preview & Lead Selection ---');
+
+    // Both players should have teampreview available actions
+    if (ashBattle.availableActions?.type !== 'teampreview') {
+      throw new Error(`Expected teampreview actions for Ash, got ${ashBattle.availableActions?.type}`);
+    }
+    if (garyBattle.availableActions?.type !== 'teampreview') {
+      throw new Error(`Expected teampreview actions for Gary, got ${garyBattle.availableActions?.type}`);
+    }
+
+    // Ash selects lead (index 0 = first pokemon)
+    const ashLeadPromise = waitForRoomUpdate(
+      client1,
+      (r) => r.battle?.waitingForOpponent === true
+    );
+
+    client1.emit('battle:action', {
+      roomCode: indRoomCode,
+      playerId: 'trainer-ash-2',
+      action: { type: 'team', pokemonIndex: 0 },
+    });
+
+    p1CurrentRoom = await ashLeadPromise;
+    if (!p1CurrentRoom.battle?.waitingForOpponent) {
+      throw new Error('Ash should be waiting for opponent after selecting lead');
+    }
+    console.log('✓ Ash selected lead Pokémon, now waiting for Gary');
+
+    // Gary selects lead (index 0) → Both leads locked → Turn starts
+    const p1Turn1Promise = waitForRoomUpdate(
+      client1,
+      (r) => r.battle !== undefined && r.battle.availableActions !== undefined && r.battle.availableActions.type !== 'teampreview' && r.battle.mySide.activePokemon !== undefined
+    );
+    const p2Turn1Promise = waitForRoomUpdate(
+      client2,
+      (r) => r.battle !== undefined && r.battle.availableActions !== undefined && r.battle.availableActions.type !== 'teampreview' && r.battle.mySide.activePokemon !== undefined
+    );
+
+    client2.emit('battle:action', {
+      roomCode: indRoomCode,
+      playerId: 'trainer-gary-2',
+      action: { type: 'team', pokemonIndex: 0 },
+    });
+
+    p1CurrentRoom = await p1Turn1Promise;
+    p2CurrentRoom = await p2Turn1Promise;
+
+    console.log(`✓ Both leads selected! Turn ${p1CurrentRoom.battle?.turn}`);
+
+    // Verify active pokemon exist
+    if (!p1CurrentRoom.battle?.mySide.activePokemon) {
+      throw new Error('Active pokemon should exist for Ash after lead selection');
+    }
+    if (!p2CurrentRoom.battle?.mySide.activePokemon) {
+      throw new Error('Active pokemon should exist for Gary after lead selection');
+    }
+
+    console.log(`  Ash's lead: ${p1CurrentRoom.battle?.mySide.activePokemon.displayName}`);
+    console.log(`  Gary's lead: ${p2CurrentRoom.battle?.mySide.activePokemon.displayName}`);
+
+    // ─────────────────────────────────────────────────────────────
+    // P4-4: NORMAL TURN ACTIONS (SIMULTANEOUS LOCK-IN)
+    // ─────────────────────────────────────────────────────────────
+    console.log('--- P4-4: Normal Turn Actions (Simultaneous Lock-In) ---');
+
+    // Ash should have move actions available
+    const ashActions = p1CurrentRoom.battle?.availableActions;
+    if (!ashActions || ashActions.type !== 'move') {
+      // Could be 'wait' or 'switch' if the engine has a pending state, but typically 'move'
+      console.log(`  Note: Ash actions type = ${ashActions?.type} (may need wait state)`);
+    }
+
+    // If moves available, pick the first non-disabled move
+    if (ashActions?.type === 'move' && ashActions.moves && ashActions.moves.length > 0) {
+      const firstMove = ashActions.moves.find(m => !m.disabled);
+      if (!firstMove) throw new Error('All moves disabled for Ash on first turn');
+
+      console.log(`  Ash available moves: ${ashActions.moves.map(m => `${m.name} (${m.type})`).join(', ')}`);
+
+      // Ash locks in a move
+      const ashTurnLockPromise = waitForRoomUpdate(
+        client1,
+        (r) => r.battle?.waitingForOpponent === true
+      );
+
+      client1.emit('battle:action', {
+        roomCode: indRoomCode,
+        playerId: 'trainer-ash-2',
+        action: { type: 'move', moveSlot: firstMove.slot },
+      });
+
+      p1CurrentRoom = await ashTurnLockPromise;
+      if (!p1CurrentRoom.battle?.waitingForOpponent) {
+        throw new Error('Ash should be waiting for opponent after locking in move');
+      }
+      console.log(`✓ Ash locked in: ${firstMove.name}`);
+
+      // Verify double-submit is blocked
+      const errPromiseBattleDupe = new Promise<string>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          cleanup();
+          reject(new Error('Timed out waiting for battle:error'));
+        }, 6000);
+        const handler = ({ message }: { message: string }) => {
+          cleanup();
+          resolve(message);
+        };
+        const cleanup = () => {
+          clearTimeout(timer);
+          client1.off('battle:error', handler);
+        };
+        client1.on('battle:error', handler);
+      });
+
+      client1.emit('battle:action', {
+        roomCode: indRoomCode,
+        playerId: 'trainer-ash-2',
+        action: { type: 'move', moveSlot: firstMove.slot },
+      });
+
+      const battleDupeErr = await errPromiseBattleDupe;
+      if (!battleDupeErr.includes('already locked in')) {
+        throw new Error(`Expected 'already locked in' error, got: ${battleDupeErr}`);
+      }
+      console.log(`✓ Security: Double-submit blocked ("${battleDupeErr}")`);
+
+      // Gary selects a move → turn resolves
+      const garyActions = p2CurrentRoom.battle?.availableActions;
+      if (garyActions?.type === 'move' && garyActions.moves && garyActions.moves.length > 0) {
+        const garyFirstMove = garyActions.moves.find(m => !m.disabled);
+        if (!garyFirstMove) throw new Error('All moves disabled for Gary');
+
+        const p1TurnResolvePromise = waitForRoomUpdate(
+          client1,
+          (r) => r.battle !== undefined && r.battle.waitingForOpponent === false && !r.battle.opponentLockedIn && (r.battle.turn > 1 || r.battle.phase === 'finished')
+        );
+        const p2TurnResolvePromise = waitForRoomUpdate(
+          client2,
+          (r) => r.battle !== undefined && r.battle.waitingForOpponent === false && !r.battle.opponentLockedIn && (r.battle.turn > 1 || r.battle.phase === 'finished')
+        );
+
+        client2.emit('battle:action', {
+          roomCode: indRoomCode,
+          playerId: 'trainer-gary-2',
+          action: { type: 'move', moveSlot: garyFirstMove.slot },
+        });
+
+        p1CurrentRoom = await p1TurnResolvePromise;
+        p2CurrentRoom = await p2TurnResolvePromise;
+
+        console.log(`✓ Turn resolved! Gary used: ${garyFirstMove.name}`);
+        console.log(`  New turn: ${p1CurrentRoom.battle?.turn}`);
+
+        // Verify battle log populated
+        const logCount = p1CurrentRoom.battle?.log?.length || 0;
+        if (logCount === 0) {
+          throw new Error('Battle log should contain entries after a turn');
+        }
+        console.log(`✓ Battle log has ${logCount} entries`);
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // P4-5: BATTLE FIELD STATE
+    // ─────────────────────────────────────────────────────────────
+    console.log('--- P4-5: Battle Field State Verification ---');
+
+    const fieldState = p1CurrentRoom.battle?.field;
+    if (!fieldState) throw new Error('Field state should exist');
+    if (!fieldState.sideHazards) throw new Error('Side hazards object should exist');
+
+    console.log(`✓ Field state present: weather=${fieldState.weather || 'none'}, terrain=${fieldState.terrain || 'none'}`);
+    console.log(`  Side hazards: mine=${JSON.stringify(fieldState.sideHazards.mine)}, opp=${JSON.stringify(fieldState.sideHazards.opponent)}`);
+
+    // ─────────────────────────────────────────────────────────────
+    // P4-6: FORFEIT BATTLE
+    // ─────────────────────────────────────────────────────────────
+    console.log('--- P4-6: Forfeit Battle ---');
+
+    const p1ForfeitPromise = waitForRoomUpdate(
+      client1,
+      (r) => r.phase === 'finished' && r.battle?.phase === 'finished'
+    );
+    const p2ForfeitPromise = waitForRoomUpdate(
+      client2,
+      (r) => r.phase === 'finished' && r.battle?.phase === 'finished'
+    );
+
+    // Ash forfeits
+    client1.emit('battle:forfeit', {
+      roomCode: indRoomCode,
+      playerId: 'trainer-ash-2',
+    });
+
+    p1CurrentRoom = await p1ForfeitPromise;
+    p2CurrentRoom = await p2ForfeitPromise;
+
+    if (p1CurrentRoom.phase !== 'finished') {
+      throw new Error(`Expected room phase 'finished', got ${p1CurrentRoom.phase}`);
+    }
+    if (p1CurrentRoom.battle?.phase !== 'finished') {
+      throw new Error(`Expected battle phase 'finished', got ${p1CurrentRoom.battle?.phase}`);
+    }
+
+    // Gary should be the winner since Ash forfeited
+    if (p1CurrentRoom.battle?.winnerPlayerId !== 'trainer-gary-2') {
+      throw new Error(`Expected winner to be Gary after Ash forfeited, got ${p1CurrentRoom.battle?.winnerPlayerId}`);
+    }
+    if (p2CurrentRoom.battle?.winnerPlayerId !== 'trainer-gary-2') {
+      throw new Error('Gary should also see himself as winner');
+    }
+
+    // Ash should see Gary as winner, Gary sees Gary as winner
+    const winnerIdAshPerspective = (p1CurrentRoom.battle?.winnerPlayerId as string);
+    const winnerIdGaryPerspective = (p2CurrentRoom.battle?.winnerPlayerId as string);
+    if (winnerIdAshPerspective === 'trainer-ash-2') throw new Error('Ash should NOT be winner after forfeiting');
+    if (winnerIdGaryPerspective !== 'trainer-gary-2') throw new Error('Gary SHOULD be winner after Ash forfeited');
+
+    console.log(`✓ Battle forfeited! Winner: ${p1CurrentRoom.battle?.winnerName}`);
+    console.log(`  Ash sees winnerPlayerId = ${p1CurrentRoom.battle?.winnerPlayerId}`);
+    console.log(`  Gary sees winnerPlayerId = ${p2CurrentRoom.battle?.winnerPlayerId}`);
+
+    // ─────────────────────────────────────────────────────────────
+    // P4-7: REMATCH
+    // ─────────────────────────────────────────────────────────────
+    console.log('--- P4-7: Rematch Flow ---');
+
+    const p1RematchPromise = waitForRoomUpdate(
+      client1,
+      (r) => r.phase === 'team-reveal'
+    );
+    const p2RematchPromise = waitForRoomUpdate(
+      client2,
+      (r) => r.phase === 'team-reveal'
+    );
+
+    client1.emit('battle:rematch', {
+      roomCode: indRoomCode,
+      playerId: 'trainer-ash-2',
+    });
+
+    p1CurrentRoom = await p1RematchPromise;
+    p2CurrentRoom = await p2RematchPromise;
+
+    if (p1CurrentRoom.phase !== 'team-reveal') {
+      throw new Error(`Expected phase team-reveal after rematch, got ${p1CurrentRoom.phase}`);
+    }
+
+    // Both players should see revealed teams again
+    if (!p1CurrentRoom.revealedTeams || Object.keys(p1CurrentRoom.revealedTeams).length !== 2) {
+      throw new Error('Revealed teams should be present after rematch');
+    }
+
+    console.log('✓ Rematch triggered! Room returned to team-reveal phase');
+
+    // Start a new battle after rematch
+    const p1Rematch2Promise = waitForRoomUpdate(
+      client1,
+      (r) => r.phase === 'battle' && r.battle !== undefined && r.battle.availableActions !== undefined
+    );
+    const p2Rematch2Promise = waitForRoomUpdate(
+      client2,
+      (r) => r.phase === 'battle' && r.battle !== undefined && r.battle.availableActions !== undefined
+    );
+
+    client2.emit('battle:start', {
+      roomCode: indRoomCode,
+      playerId: 'trainer-gary-2',
+    });
+
+    p1CurrentRoom = await p1Rematch2Promise;
+    p2CurrentRoom = await p2Rematch2Promise;
+
+    if (p1CurrentRoom.phase !== 'battle') {
+      throw new Error('Expected battle phase after re-start');
+    }
+    if (!p1CurrentRoom.battle?.battleId) {
+      throw new Error('New battle should have a battleId');
+    }
+
+    console.log(`✓ Rematch battle started! New Battle ID: ${p1CurrentRoom.battle.battleId}`);
+
+    // ─────────────────────────────────────────────────────────────
+    // P4-8: BATTLE START VALIDATION (Negative Tests)
+    // ─────────────────────────────────────────────────────────────
+    console.log('--- P4-8: Battle Start Validation ---');
+
+    // Starting battle from battle phase should fail (needs team-reveal)
+    const errPromiseBattleStart = new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error('Timed out waiting for battle:error'));
+      }, 6000);
+      const handler = ({ message }: { message: string }) => {
+        cleanup();
+        resolve(message);
+      };
+      const cleanup = () => {
+        clearTimeout(timer);
+        client1.off('battle:error', handler);
+      };
+      client1.on('battle:error', handler);
+    });
+
+    client1.emit('battle:start', {
+      roomCode: indRoomCode,
+      playerId: 'trainer-ash-2',
+    });
+
+    const battleStartErr = await errPromiseBattleStart;
+    if (!battleStartErr.includes('team-reveal')) {
+      throw new Error(`Expected 'team-reveal' error, got: ${battleStartErr}`);
+    }
+    console.log(`✓ Security: Starting battle outside team-reveal phase blocked ("${battleStartErr}")`);
+
+    // ─────────────────────────────────────────────────────────────
+    // P4-9: COMPLETE BATTLE LOG & SHOWDOWN ENGINE STATE
+    // ─────────────────────────────────────────────────────────────
+    console.log('--- P4-9: Showdown Engine Integration State ---');
+
+    const currentBattle = p1CurrentRoom.battle!;
+    if (currentBattle.battleId.startsWith('BTL-')) {
+      console.log(`✓ Battle ID format correct: ${currentBattle.battleId}`);
+    } else {
+      throw new Error(`Battle ID should start with BTL-, got ${currentBattle.battleId}`);
+    }
+
+    if (currentBattle.mySide.team.length !== 6) {
+      throw new Error(`Expected 6 pokemon on mySide, got ${currentBattle.mySide.team.length}`);
+    }
+    if (currentBattle.opponentSide.team.length !== 6) {
+      throw new Error(`Expected 6 pokemon on opponentSide, got ${currentBattle.opponentSide.team.length}`);
+    }
+
+    // Verify team has correct structure
+    const teamPoke = currentBattle.mySide.team[0];
+    if (!teamPoke.species || !teamPoke.displayName) {
+      throw new Error('Team pokemon should have species and displayName');
+    }
+    if (typeof teamPoke.hpPercent !== 'number') {
+      throw new Error('Team pokemon should have hpPercent');
+    }
+    if (typeof teamPoke.fainted !== 'boolean') {
+      throw new Error('Team pokemon should have fainted boolean');
+    }
+    if (!teamPoke.types || teamPoke.types.length === 0) {
+      throw new Error('Team pokemon should have types');
+    }
+    if (!teamPoke.spriteUrl) {
+      throw new Error('Team pokemon should have spriteUrl');
+    }
+
+    console.log('✓ Battle team structure verified (species, displayName, hpPercent, fainted, types, spriteUrl)');
+
+    // Verify mySide has exact HP values (privacy check)
+    if (currentBattle.mySide.team[0].hp === undefined) {
+      throw new Error('Own team should expose exact HP');
+    }
+    if (currentBattle.mySide.team[0].maxHp === undefined) {
+      throw new Error('Own team should expose exact maxHp');
+    }
+
+    console.log('✓ Own side exposes exact HP values');
+    console.log(`  First pokemon: ${teamPoke.displayName} (${teamPoke.species}) - ${teamPoke.hp}/${teamPoke.maxHp} HP, types: ${teamPoke.types.join('/')}`);
+
+    console.log('\n===================================================');
+    console.log(' 🏆 PHASE 4 BATTLE INTEGRATION TESTS COMPLETE');
+    console.log('===================================================\n');
+
+    console.log('\n🎉 ALL PHASE 1 + PHASE 2 + PHASE 3 + PHASE 4 INTEGRATION TESTS PASSED SUCCESSFULLY!\n');
+
   } finally {
     client1.disconnect();
     client2.disconnect();

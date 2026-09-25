@@ -6,6 +6,7 @@ import { LobbyView } from '../components/LobbyView';
 import { DraftView } from '../components/DraftView';
 import { TeamBuilderView } from '../components/TeamBuilderView';
 import { TeamRevealView } from '../components/TeamRevealView';
+import { BattleView } from '../components/BattleView';
 
 export default function HomePage() {
   const { room } = useGameSocket();
@@ -23,6 +24,9 @@ export default function HomePage() {
       return <TeamBuilderView />;
     case 'team-reveal':
       return <TeamRevealView />;
+    case 'battle':
+    case 'finished':
+      return <BattleView />;
     default:
       return <LobbyView />;
   }

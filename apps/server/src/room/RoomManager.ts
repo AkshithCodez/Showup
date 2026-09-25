@@ -18,9 +18,13 @@ import {
   normalizeRoomCode,
   validatePlayerName,
   checkCanStartDraft,
+  type BattleAction,
+  type ClientBattleView,
 } from '@showup/shared';
 import { PokemonDataService } from '../services/PokemonDataService.js';
 import { PokemonSetDataService } from '../services/PokemonSetDataService.js';
+import type { BattleEngine } from '../battle/BattleEngine.js';
+import { ShowdownBattleEngine } from '../battle/ShowdownBattleEngine.js';
 
 interface SocketPlayerMapping {
   playerId: string;
@@ -29,6 +33,7 @@ interface SocketPlayerMapping {
 
 export class RoomManager {
   private rooms = new Map<string, RoomState>();
+  private battleEngines = new Map<string, BattleEngine>();
   private socketToPlayer = new Map<string, SocketPlayerMapping>();
   private playerToSocket = new Map<string, string>();
   private pokemonService: PokemonDataService;
@@ -112,10 +117,6 @@ export class RoomManager {
       throw new Error(`Room "${roomCode}" does not exist. Check your code.`);
     }
 
-    if (room.phase !== 'lobby') {
-      throw new Error(`Cannot join room "${roomCode}" because the battle has already started.`);
-    }
-
     const nameCheck = validatePlayerName(playerNameRaw);
     if (!nameCheck.valid) {
       throw new Error(nameCheck.error ?? 'Invalid player name.');
@@ -129,6 +130,11 @@ export class RoomManager {
       room.canStartDraft = checkCanStartDraft(room.players);
       this.bindSocket(socketId, playerId, roomCode);
       return { room, player: existingPlayer };
+    }
+
+    // New players can only join during the lobby phase
+    if (room.phase !== 'lobby') {
+      throw new Error(`Cannot join room "${roomCode}" because the match is already in progress.`);
     }
 
     // Max 2 players validation
@@ -623,6 +629,146 @@ export class RoomManager {
   }
 
   /**
+   * Starts a multiplayer battle using the Showdown battle simulator.
+   */
+  public async startBattle(
+    roomCodeRaw: string,
+    playerId: string,
+    onUpdate?: () => void
+  ): Promise<RoomState> {
+    const roomCode = normalizeRoomCode(roomCodeRaw);
+    const room = this.rooms.get(roomCode);
+    if (!room) {
+      throw new Error(`Room "${roomCode}" not found.`);
+    }
+
+    if (room.phase !== 'team-reveal') {
+      throw new Error('Battle can only be started from the team-reveal phase.');
+    }
+
+    const player = room.players.find((p) => p.id === playerId);
+    if (!player) {
+      throw new Error('Player not in this room.');
+    }
+
+    if (room.players.length !== 2) {
+      throw new Error('Exactly 2 players are required to start a battle.');
+    }
+
+    const p1 = room.players[0];
+    const p2 = room.players[1];
+
+    const p1TB = room.teamBuilding?.playerStates[p1.id];
+    const p2TB = room.teamBuilding?.playerStates[p2.id];
+
+    if (!p1TB || p1TB.pokemon.length !== 6 || !p2TB || p2TB.pokemon.length !== 6) {
+      throw new Error('Both players must have configured all 6 Pokémon sets.');
+    }
+
+    // Clean up previous engine if any
+    this.battleEngines.get(roomCode)?.destroy();
+
+    const engine = new ShowdownBattleEngine(
+      { id: p1.id, name: p1.name, team: p1TB.pokemon },
+      { id: p2.id, name: p2.name, team: p2TB.pokemon },
+      this.setDataService,
+      'gen9customgame'
+    );
+
+    if (onUpdate) {
+      engine.onUpdate(onUpdate);
+    }
+
+    this.battleEngines.set(roomCode, engine);
+    await engine.start();
+
+    room.phase = 'battle';
+    return room;
+  }
+
+  /**
+   * Submits a battle action (move or switch) for a player.
+   */
+  public async submitBattleAction(
+    roomCodeRaw: string,
+    playerId: string,
+    action: BattleAction
+  ): Promise<RoomState> {
+    const roomCode = normalizeRoomCode(roomCodeRaw);
+    const room = this.rooms.get(roomCode);
+    if (!room) {
+      throw new Error(`Room "${roomCode}" not found.`);
+    }
+
+    if (room.phase !== 'battle') {
+      throw new Error('Room is not currently in battle phase.');
+    }
+
+    const engine = this.battleEngines.get(roomCode);
+    if (!engine) {
+      throw new Error('Active battle engine not found.');
+    }
+
+    await engine.submitAction(playerId, action);
+
+    if (engine.isFinished()) {
+      room.phase = 'finished';
+    }
+
+    return room;
+  }
+
+  /**
+   * Forfeits a battle on behalf of a player.
+   */
+  public async forfeitBattle(
+    roomCodeRaw: string,
+    playerId: string
+  ): Promise<RoomState> {
+    const roomCode = normalizeRoomCode(roomCodeRaw);
+    const room = this.rooms.get(roomCode);
+    if (!room) {
+      throw new Error(`Room "${roomCode}" not found.`);
+    }
+
+    const engine = this.battleEngines.get(roomCode);
+    if (!engine) {
+      throw new Error('Active battle engine not found.');
+    }
+
+    await engine.forfeit(playerId);
+    room.phase = 'finished';
+
+    return room;
+  }
+
+  /**
+   * Resets room for a rematch.
+   */
+  public async rematchBattle(
+    roomCodeRaw: string,
+    playerId: string
+  ): Promise<RoomState> {
+    const roomCode = normalizeRoomCode(roomCodeRaw);
+    const room = this.rooms.get(roomCode);
+    if (!room) {
+      throw new Error(`Room "${roomCode}" not found.`);
+    }
+
+    // Clean up previous engine
+    this.battleEngines.get(roomCode)?.destroy();
+    this.battleEngines.delete(roomCode);
+
+    // Transition back to team-reveal so both players can review and re-enter battle
+    room.phase = 'team-reveal';
+    return room;
+  }
+
+  public getBattleEngine(roomCodeRaw: string): BattleEngine | undefined {
+    return this.battleEngines.get(normalizeRoomCode(roomCodeRaw));
+  }
+
+  /**
    * Serializes room state specifically for a player, omitting opponent's private draft and build sets.
    */
   public serializeRoomForPlayer(room: RoomState, playerId: string): ClientRoomView {
@@ -714,6 +860,15 @@ export class RoomManager {
       }
     }
 
+    // Battle serialization
+    let battleView: ClientBattleView | undefined = undefined;
+    if (room.phase === 'battle' || room.phase === 'finished') {
+      const engine = this.battleEngines.get(room.roomCode);
+      if (engine) {
+        battleView = engine.getClientBattleView(playerId);
+      }
+    }
+
     return {
       roomCode: room.roomCode,
       hostId: room.hostId,
@@ -725,6 +880,7 @@ export class RoomManager {
       draft: draftView,
       teamBuilding: teamBuildingView,
       revealedTeams,
+      battle: battleView,
     };
   }
 
@@ -752,6 +908,8 @@ export class RoomManager {
     // If room is empty, clean it up
     if (room.players.length === 0) {
       this.rooms.delete(roomCode);
+      this.battleEngines.get(roomCode)?.destroy();
+      this.battleEngines.delete(roomCode);
       this.unbindPlayer(playerId);
       return { player: removedPlayer };
     }

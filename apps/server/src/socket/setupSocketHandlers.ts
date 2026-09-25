@@ -147,6 +147,67 @@ export function setupSocketHandlers(
       }
     });
 
+    // 8. Start Battle
+    socket.on('battle:start', async ({ roomCode, playerId }) => {
+      try {
+        const mapping = roomManager.getPlayerMapping(socket.id);
+        if (mapping && mapping.playerId !== playerId) {
+          throw new Error('Unauthorized: You cannot start battle for another player.');
+        }
+        const updatedRoom = await roomManager.startBattle(roomCode, playerId, () => {
+          const currentRoom = roomManager.getRoom(roomCode);
+          if (currentRoom) {
+            broadcastRoomUpdate(io, roomManager, currentRoom);
+          }
+        });
+        broadcastRoomUpdate(io, roomManager, updatedRoom);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Failed to start battle.';
+        socket.emit('battle:error', { message });
+      }
+    });
+
+    // 9. Submit Battle Action (Move or Switch)
+    socket.on('battle:action', async ({ roomCode, playerId, action }) => {
+      try {
+        const mapping = roomManager.getPlayerMapping(socket.id);
+        if (mapping && mapping.playerId !== playerId) {
+          throw new Error('Unauthorized: You cannot issue battle commands for another player.');
+        }
+        const updatedRoom = await roomManager.submitBattleAction(roomCode, playerId, action);
+        broadcastRoomUpdate(io, roomManager, updatedRoom);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Failed to submit battle action.';
+        socket.emit('battle:error', { message });
+      }
+    });
+
+    // 10. Forfeit Battle
+    socket.on('battle:forfeit', async ({ roomCode, playerId }) => {
+      try {
+        const mapping = roomManager.getPlayerMapping(socket.id);
+        if (mapping && mapping.playerId !== playerId) {
+          throw new Error('Unauthorized: You cannot forfeit for another player.');
+        }
+        const updatedRoom = await roomManager.forfeitBattle(roomCode, playerId);
+        broadcastRoomUpdate(io, roomManager, updatedRoom);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Failed to forfeit battle.';
+        socket.emit('battle:error', { message });
+      }
+    });
+
+    // 11. Rematch
+    socket.on('battle:rematch', async ({ roomCode, playerId }) => {
+      try {
+        const updatedRoom = await roomManager.rematchBattle(roomCode, playerId);
+        broadcastRoomUpdate(io, roomManager, updatedRoom);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : 'Failed to request rematch.';
+        socket.emit('battle:error', { message });
+      }
+    });
+
     // 8. Leave Room
     socket.on('room:leave', ({ roomCode, playerId }) => {
       try {

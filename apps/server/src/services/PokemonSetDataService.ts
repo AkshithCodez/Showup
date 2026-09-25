@@ -141,6 +141,24 @@ export class PokemonSetDataService {
   }
 
   /**
+   * Retrieves normalized move summary by move name or ID.
+   */
+  public getMoveSummary(name: string): MoveSummary | undefined {
+    const move = Dex.moves.get(name);
+    if (!move || !move.exists) return undefined;
+    return {
+      id: move.id,
+      displayName: move.name,
+      type: move.type as PokemonType,
+      category: (move.category as 'Physical' | 'Special' | 'Status') || 'Status',
+      basePower: move.basePower || 0,
+      accuracy: move.accuracy === true ? true : (move.accuracy || 100),
+      priority: move.priority || 0,
+      shortDesc: move.shortDesc || move.desc || '',
+    };
+  }
+
+  /**
    * Retrieves competitive items.
    */
   public getItems(): ItemSummary[] {
